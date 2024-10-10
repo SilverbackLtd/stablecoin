@@ -1,0 +1,4 @@
+.build/
+.silverback-sessions/
+.silverback-images/
+db.sqlite
