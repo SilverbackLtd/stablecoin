@@ -1,0 +1,7 @@
+ethereum:
+  local:
+    default_provider: foundry
+
+plugins:
+  - name: vyper
+  - name: foundry

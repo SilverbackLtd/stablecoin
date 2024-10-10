@@ -1,0 +1,7 @@
+eth-ape
+ape-optimism
+ape-base
+ape-vyper
+fastapi[standard]
+sqlmodel
+psycopg2-binary
