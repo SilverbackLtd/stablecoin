@@ -1,3 +1,2 @@
-.build/
 .silverback-sessions/
 db.sqlite
