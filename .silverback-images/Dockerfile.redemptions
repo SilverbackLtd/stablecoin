@@ -1,0 +1,12 @@
+FROM ghcr.io/apeworx/silverback:latest
+USER root
+WORKDIR /app
+RUN chown harambe:harambe /app
+USER harambe
+COPY contracts .
+COPY ape-config.yaml .
+COPY requirements.txt .
+COPY database.py .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN ape plugins install . || true
+COPY bots/redemptions.py /app/bot.py
