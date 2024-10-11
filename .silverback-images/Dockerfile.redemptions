@@ -9,5 +9,5 @@ COPY ape-config.yaml .
 COPY requirements.txt .
 COPY database.py .
 RUN pip install --upgrade pip && pip install -r requirements.txt
-RUN ape plugins install . || true
+RUN ape plugins install -U .
 COPY bots/redemptions.py /app/bot.py
