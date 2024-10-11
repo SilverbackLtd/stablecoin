@@ -1,6 +1,10 @@
-ethereum:
+ethereum: &use-foundry
+  sepolia-fork:
+    default_provider: foundry
   local:
     default_provider: foundry
+optimism: *use-foundry
+base: *use-foundry
 
 plugins:
   - name: vyper
