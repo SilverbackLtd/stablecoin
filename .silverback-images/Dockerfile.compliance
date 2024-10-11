@@ -10,4 +10,5 @@ RUN ape plugins install -U .
 COPY database.py .
 COPY contracts/ .
 RUN ape compile
+COPY compliance.json .
 COPY bots/compliance.py /app/bot.py
