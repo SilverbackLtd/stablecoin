@@ -3,6 +3,7 @@ USER root
 WORKDIR /app
 RUN chown harambe:harambe /app
 USER harambe
+COPY .build .
 COPY contracts .
 COPY ape-config.yaml .
 COPY requirements.txt .
