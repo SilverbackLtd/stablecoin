@@ -1,3 +1,4 @@
+import json
 import os
 
 from ape import project
@@ -7,6 +8,7 @@ from silverback import SilverbackBot
 from sqlmodel import Session, create_engine, select
 from taskiq import TaskiqDepends as Depends
 
+STABLECOIN_ADDRESSES = json.loads(os.environ["STABLECOIN_ADDRESSES"])
 engine = create_engine(os.environ["DB_URI"])
 
 
@@ -16,11 +18,9 @@ def get_session():
 
 
 bot = SilverbackBot()
-
-if address := os.environ.get("STABLECOIN_ADDRESS"):
-    stable = project.Stablecoin.at(address)
-else:
-    stable = project.Stablecoin.deploy(sender=bot.signer)
+stable = project.Stablecoin.at(
+    STABLECOIN_ADDRESSES[f"{bot.identifier.ecosystem}:{bot.identifier.network}"]
+)
 
 
 @bot.on_(stable.Transfer)

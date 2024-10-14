@@ -1,3 +1,4 @@
+import json
 import os
 import random
 
@@ -8,6 +9,7 @@ from silverback import SilverbackBot
 from sqlmodel import Session, create_engine, select
 from taskiq import TaskiqDepends as Depends
 
+STABLECOIN_ADDRESSES = json.loads(os.environ["STABLECOIN_ADDRESSES"])
 engine = create_engine(os.environ["DB_URI"])
 
 
@@ -17,7 +19,9 @@ def get_session():
 
 
 bot = SilverbackBot()
-stable = project.Stablecoin.at(os.environ["STABLECOIN_ADDRESS"])
+stable = project.Stablecoin.at(
+    STABLECOIN_ADDRESSES[f"{bot.identifier.ecosystem}:{bot.identifier.network}"]
+)
 
 
 def compliance_check(log):
