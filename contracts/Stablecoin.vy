@@ -68,15 +68,23 @@ def transferFrom(sender: address, receiver: address, amount: uint256) -> bool:
     return True
 
 
-@external
-def mint(receiver: address, amount: uint256) -> bool:
-    assert msg.sender == self.minter
-    assert not self.is_frozen[receiver]
-    
-    self.totalSupply += amount
-    self.balanceOf[receiver] += amount
+struct Mint:
+    receiver: address
+    amount: uint256
 
-    log IERC20.Transfer(empty(address), receiver, amount)
+
+@external
+def mint(mints: DynArray[Mint, 100]) -> bool:
+    assert msg.sender == self.minter
+
+    for mint: Mint in mints:
+        assert not self.is_frozen[mint.receiver]
+
+        self.totalSupply += mint.amount
+        self.balanceOf[mint.receiver] += mint.amount
+
+        log IERC20.Transfer(empty(address), mint.receiver, mint.amount)
+
     return True
 
 

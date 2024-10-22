@@ -7,5 +7,7 @@ optimism: *use-foundry
 base: *use-foundry
 
 plugins:
+  - name: base
+  - name: optimism
   - name: vyper
   - name: foundry

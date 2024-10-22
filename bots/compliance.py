@@ -2,20 +2,16 @@ import json
 import os
 import random
 
-from ape import project
+from ape import networks, project
 from ape.utils import ZERO_ADDRESS
-from database import Account
+from httpx import AsyncClient
 from silverback import SilverbackBot
-from sqlmodel import Session, create_engine, select
-from taskiq import TaskiqDepends as Depends
 
 STABLECOIN_ADDRESSES = json.loads(os.environ["STABLECOIN_ADDRESSES"])
-engine = create_engine(os.environ["DB_URI"])
-
-
-def get_session():
-    with Session(engine) as session:
-        yield session
+bank = AsyncClient(
+    base_url=f'{os.environ["BANK_URI"]}/internal',
+    headers={"X-Internal-Key": os.environ["BANK_API_KEY"]},
+)
 
 
 bot = SilverbackBot()
@@ -32,20 +28,13 @@ def compliance_check(log):
 
 
 @bot.on_(stable.Transfer)
-async def check_compliance(log, session=Depends(get_session)):
+async def check_compliance(log):
     if compliance_check(log):
-        if account := session.exec(
-            select(Account).where(Account.address == log.sender)
-        ).one_or_none():
-            account.sus = True
-            session.add(account)
-            session.commit()
+        await bank.delete(f"/access/{log.sender}")
+        await bank.delete(f"/access/{log.receiver}")
 
-        if account := session.exec(
-            select(Account).where(Account.address == log.receiver)
-        ).one_or_none():
-            account.sus = True
-            session.add(account)
-            session.commit()
-
-        stable.set_freeze([log.sender, log.receiver], sender=bot.signer)
+        for network_choice, stable_address in STABLECOIN_ADDRESSES.items():
+            with networks.parse_network_choice(network_choice):
+                project.Stablecoin.at(stable_address).set_freeze(
+                    [log.sender, log.receiver], sender=bot.signer
+                )
