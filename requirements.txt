@@ -1,3 +1,4 @@
+eth-hash[pycryptodome]
 eth-pydantic-types
 fastapi[standard]
 pydantic-settings
