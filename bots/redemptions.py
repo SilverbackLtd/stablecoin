@@ -35,7 +35,7 @@ async def minted(_):
             network=bot.identifier.network,
         ),
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
 
     mints = defaultdict(lambda: 0)
 
@@ -71,9 +71,10 @@ async def redeemed(log):
     if not log.receiver == ZERO_ADDRESS:
         return
 
-    await bank.post(
+    response = await bank.post(
         f"/redeem/{log.sender}",
         params=dict(amount=log.value // 10 ** stable.decimals()),
     )
+    assert response.status_code == 200, response.text
 
     return log.value

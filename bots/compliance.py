@@ -30,8 +30,11 @@ def compliance_check(log):
 @bot.on_(stable.Transfer)
 async def check_compliance(log):
     if compliance_check(log):
-        await bank.delete(f"/access/{log.sender}")
-        await bank.delete(f"/access/{log.receiver}")
+        response = await bank.delete(f"/access/{log.sender}")
+        assert response.status_code == 200, response.text
+        
+        response = await bank.delete(f"/access/{log.receiver}")
+        assert response.status_code == 200, response.text
 
         for network_choice, stable_address in STABLECOIN_ADDRESSES.items():
             with networks.parse_network_choice(network_choice):
