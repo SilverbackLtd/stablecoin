@@ -5,5 +5,7 @@ RUN chown harambe:harambe /app
 USER harambe
 COPY ape-config.yaml .
 RUN ape plugins install -U .
+COPY contracts contracts
+RUN ape compile
 COPY compliance.json ~/.ape/accounts/bot.json
 COPY bots/compliance.py /app/bot.py
