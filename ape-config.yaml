@@ -1,3 +1,9 @@
+plugins:
+  # For contract
+  - name: vyper
+  # For testing/simulation
+  - name: foundry
+
 ethereum: &use-foundry
   sepolia-fork:
     default_provider: foundry
@@ -5,9 +11,3 @@ ethereum: &use-foundry
     default_provider: foundry
 optimism: *use-foundry
 base: *use-foundry
-
-plugins:
-  - name: base
-  - name: optimism
-  - name: vyper
-  - name: foundry
