@@ -1,6 +1,6 @@
 import asyncio
 
-from ape.types import AddressType
+from eth_pydantic_types import Address
 from fastapi import Cookie, Depends, FastAPI, Form, Header, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic_settings import BaseSettings
@@ -10,14 +10,14 @@ from sqlmodel import Field, Session, SQLModel, create_engine, select
 class AppSettings(BaseSettings):
     API_KEY: str = "fakesecret"
     DB_URI: str = "sqlite:///db.sqlite"
-    STABLECOIN_ADDRESSES: dict[str, AddressType] = {}
+    STABLECOIN_ADDRESSES: dict[str, Address] = {}
 
 
 settings = AppSettings()
 
 # network_choice: queue for subscribed minter
 global mint_queue
-mint_queue: dict[str, asyncio.Queue[tuple[AddressType, int]]] = {
+mint_queue: dict[str, asyncio.Queue[tuple[Address, int]]] = {
     network_choice: asyncio.Queue() for network_choice in settings.STABLECOIN_ADDRESSES
 }
 
@@ -140,7 +140,7 @@ async def deposit(
 
 @app.post("/address")
 async def set_address(
-    address: AddressType = Form(),
+    address: Address = Form(),
     account_id: int = Cookie(),
     session: Session = Depends(get_session),
 ):
@@ -237,7 +237,7 @@ internal = FastAPI(dependencies=[Depends(check_cookie)])
 
 @internal.delete("/access/{address}")
 async def compliance_failure(
-    address: AddressType,
+    address: Address,
     session: Session = Depends(get_session),
 ):
     if account := session.exec(
@@ -250,7 +250,7 @@ async def compliance_failure(
 
 @internal.post("/redeem/{address}")
 async def redeem_amount(
-    address: AddressType,
+    address: Address,
     amount: int,
     session: Session = Depends(get_session),
 ):
@@ -266,7 +266,7 @@ async def redeem_amount(
 async def get_mint_requests(
     ecosystem: str = Query(),
     network: str = Query(),
-) -> list[tuple[AddressType, int]]:
+) -> list[tuple[Address, int]]:
     network_choice = f"{ecosystem}:{network}"
 
     global mint_queue
