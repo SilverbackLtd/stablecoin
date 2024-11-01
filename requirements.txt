@@ -1,4 +1,5 @@
 eth-pydantic-types
 fastapi[standard]
+pydantic-settings
 sqlmodel
 psycopg2-binary
