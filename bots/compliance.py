@@ -7,10 +7,15 @@ from ape.utils import ZERO_ADDRESS
 from httpx import AsyncClient
 from silverback import SilverbackBot
 
-STABLECOIN_ADDRESSES = json.loads(os.environ["STABLECOIN_ADDRESSES"])
+STABLECOIN_ADDRESSES = json.loads(
+    os.environ.get(
+        "STABLECOIN_ADDRESSES",
+        '{"ethereum:local":"0x5FbDB2315678afecb367f032d93F642f64180aa3"}',
+    )
+)
 bank = AsyncClient(
-    base_url=f'{os.environ["BANK_URI"]}/internal',
-    headers={"X-Internal-Key": os.environ["BANK_API_KEY"]},
+    base_url=f'{os.environ.get("BANK_URI", "http://127.0.0.1:8000")}/internal',
+    headers={"X-Internal-Key": os.environ.get("BANK_API_KEY", "fakesecret")},
 )
 
 
@@ -32,7 +37,7 @@ async def check_compliance(log):
     if compliance_check(log):
         response = await bank.delete(f"/access/{log.sender}")
         assert response.status_code == 200, response.text
-        
+
         response = await bank.delete(f"/access/{log.receiver}")
         assert response.status_code == 200, response.text
 

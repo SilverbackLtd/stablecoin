@@ -9,10 +9,15 @@ from ape_ethereum import multicall
 from httpx import AsyncClient
 from silverback import SilverbackBot
 
-STABLECOIN_ADDRESSES = json.loads(os.environ["STABLECOIN_ADDRESSES"])
+STABLECOIN_ADDRESSES = json.loads(
+    os.environ.get(
+        "STABLECOIN_ADDRESSES",
+        '{"ethereum:local":"0x5FbDB2315678afecb367f032d93F642f64180aa3"}',
+    )
+)
 bank = AsyncClient(
-    base_url=f'{os.environ["BANK_URI"]}/internal',
-    headers={"X-Internal-Key": os.environ["BANK_API_KEY"]},
+    base_url=f'{os.environ.get("BANK_URI", "http://127.0.0.1:8000")}/internal',
+    headers={"X-Internal-Key": os.environ.get("BANK_API_KEY", "fakesecret")},
 )
 
 
