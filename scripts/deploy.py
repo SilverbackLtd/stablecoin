@@ -6,7 +6,7 @@ from ape import accounts, networks, project
 from ape.cli import account_option
 
 PROJECT_ROOT = Path(__file__).parent.parent
-MINTER = json.loads((PROJECT_ROOT / "banker.json").read_text())["address"]
+MINTER = json.loads((PROJECT_ROOT / "minter.json").read_text())["address"]
 COMPLIANCE = json.loads((PROJECT_ROOT / "compliance.json").read_text())["address"]
 
 
