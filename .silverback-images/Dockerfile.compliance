@@ -8,5 +8,5 @@ RUN ape plugins install -U .
 COPY contracts contracts
 RUN ape compile
 RUN mkdir -p /home/harambe/.ape/accounts
-COPY minter.json /home/harambe/.ape/accounts/bot.json
+COPY compliance.json /home/harambe/.ape/accounts/bot.json
 COPY bots/compliance.py /app/bot.py
