@@ -2,6 +2,7 @@ import asyncio
 
 from eth_pydantic_types import Address
 from fastapi import Cookie, Depends, FastAPI, Form, Header, Query
+from fastapi.exceptions import HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic_settings import BaseSettings
 from sqlmodel import Field, Session, SQLModel, create_engine, select
@@ -228,8 +229,10 @@ async def get_balance_updates(
     return StreamingResponse(balance_updates(), media_type="text/event-stream")
 
 
-def check_cookie(x_internal_key: str = Header()):
-    assert x_internal_key == settings.API_KEY
+def check_cookie(x_internal_key: str = Header(default=None)):
+    if x_internal_key != settings.API_KEY:
+        # NOTE: Mimic 404 for non-existent routes
+        raise HTTPException(detail="Not Found", status_code=404)
 
 
 internal = FastAPI(dependencies=[Depends(check_cookie)])
