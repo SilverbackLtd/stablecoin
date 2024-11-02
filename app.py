@@ -4,23 +4,22 @@ from eth_pydantic_types import Address
 from fastapi import Cookie, Depends, FastAPI, Form, Header, Query
 from fastapi.exceptions import HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlmodel import (Field, Relationship, Session, SQLModel, create_engine,
+                      select)
 
 
 class AppSettings(BaseSettings):
     API_KEY: str = "fakesecret"
     DB_URI: str = "sqlite:///db.sqlite"
-    STABLECOIN_ADDRESSES: dict[str, Address] = {}
+    # NOTE: Default address if you deploy `Stablecoin` with `test_accounts[0]` as first txn
+    STABLECOIN_ADDRESSES: dict[str, Address] = {
+        "ethereum:local": "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+    }
 
 
 settings = AppSettings()
-
-# network_choice: queue for subscribed minter
-global mint_queue
-mint_queue: dict[str, asyncio.Queue[tuple[Address, int]]] = {
-    network_choice: asyncio.Queue() for network_choice in settings.STABLECOIN_ADDRESSES
-}
 
 
 class Account(SQLModel, table=True):
@@ -33,6 +32,21 @@ class Account(SQLModel, table=True):
 
     # Compliance
     sus: bool = False
+
+
+class Mint(SQLModel, table=True):
+    __tablename__ = "mints"
+
+    network: str = Field(primary_key=True)
+    account_id: int = Field(foreign_key="accounts.id", primary_key=True)
+    account: Account = Relationship()
+
+    amount: int = 0  # NOTE: So that `+=` works
+
+    @field_validator("network")
+    def valid_network_choice(cls, value: str):
+        assert value in settings.STABLECOIN_ADDRESSES
+        return value
 
 
 app = FastAPI()
@@ -171,15 +185,16 @@ async def mint(
     if account.sus:
         return "You have failed our compliance"
 
-    global mint_queue
-    if not (minter := (mint_queue.get(network))):
-        return "Invalid network"
-
     account.balance -= amount
     session.add(account)
-    session.commit()
 
-    await minter.put((account.address, amount))
+    if not (mint := session.get(Mint, (network, account_id))):
+        mint = Mint(account_id=account_id, network=network)
+
+    mint.amount += amount
+    session.add(mint)
+
+    session.commit()
 
     return f"Minting ${amount}.00 on {network}"
 
@@ -263,19 +278,34 @@ async def redeem_amount(
         account.balance += amount
         session.add(account)
         session.commit()
+    else:
+        raise HTTPException(
+            detail=f"No account w/ address '{address}'", status_code=404
+        )
 
 
 @internal.get("/mints")
 async def get_mint_requests(
     ecosystem: str = Query(),
     network: str = Query(),
+    session: Session = Depends(get_session),
 ) -> list[tuple[Address, int]]:
+    # First get all the cached mints
     network_choice = f"{ecosystem}:{network}"
+    mints = [
+        # NOTE: Don't forget to account for balance adjustment (token is 6 decimal places)
+        (address, amount * 10**6)
+        for address, amount in session.exec(
+            select(Account.address, Mint.amount)
+            .join(Account)
+            .where(Mint.network == network_choice)
+        ).all()
+    ]
 
-    global mint_queue
-    mints = []
-    while mint_queue[network_choice].qsize() > 0:
-        mints.append(mint_queue[network_choice].get_nowait())
+    # Then delete all the cached mints
+    for mint in session.exec(select(Mint).where(Mint.network == network_choice)).all():
+        session.delete(mint)
+    session.commit()
 
     return mints
 
