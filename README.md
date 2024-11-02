@@ -29,3 +29,65 @@ No signup required, just pull the fully OSS Silverback SDK and make your own bot
 Once you are happy and want to run things in production, please visit us at https://silverback.apeworx.io to set up an account and get started with deploying on our cloud platform.
 
 **Try Silverback Today!**
+
+## Local Testing
+
+You can run this example locally. First, start an instance of anvil via:
+
+```sh
+anvil -b 1
+```
+
+Then deploy your stablecoin via:
+```sh
+ape run deploy --minter TEST::1 --compliance TEST::2 --account TEST::0 --network :local
+...
+SUCCESS:  Contract 'Stablecoin' deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+```
+
+Next, you need to run the bank:
+```sh
+fastapi dev
+```
+
+Now you can visit the bank by going to http://127.0.0.1:8000 in the browser.
+
+Next, you want to run the redemptions bot via:
+```sh
+silverback run redemptions --account TEST::1 --network :local
+```
+
+And also the compliance bot via (optional):
+```sh
+silverback run compliance --account TEST::2 --network :local
+```
+
+Finally, go into an ape session via:
+```sh
+ape console --network :local
+```
+
+You want to get an account available on the local chain via:
+```py
+ In [0]: me = accounts.test_accounts[3]
+ In [1]: me.address
+Out [1]: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+```
+
+Put this address in the "Your Address" form field, it should update the app
+
+Deposit some money into your bank account, then mint some stables to your address
+
+Now, in your console you should be able to load the token and display your balance via (from the above deployment):
+```py
+ In [2]: token = project.Stablecoin.at("0x5FbDB2315678afecb367f032d93F642f64180aa3")
+ In [3]: token.balanceOf(me)
+Out [3]: <amount you minted yourself>
+```
+
+Finally, to get balance back to your account, redeem some tokens via:
+```py
+ In [4]: token.burn(token.balanceOf(me), sender=me)
+```
+
+You should see the "redemptions" bot pick this balance up and push it to your account!
