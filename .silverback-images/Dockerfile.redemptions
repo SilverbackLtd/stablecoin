@@ -7,5 +7,6 @@ COPY ape-config.yaml .
 RUN ape plugins install -U .
 COPY contracts contracts
 RUN ape compile
-COPY minter.json ~/.ape/accounts/bot.json
+RUN mkdir -p /home/harambe/.ape/accounts
+COPY minter.json /home/harambe/.ape/accounts/bot.json
 COPY bots/redemptions.py /app/bot.py
