@@ -2,7 +2,7 @@ import json
 import os
 import random
 
-from ape import networks, project
+from ape import chain, networks, project
 from ape.utils import ZERO_ADDRESS
 from httpx import AsyncClient
 from silverback import SilverbackBot
@@ -46,3 +46,20 @@ async def check_compliance(log):
                 project.Stablecoin.at(stable_address).set_freeze(
                     [log.sender, log.receiver], sender=bot.signer
                 )
+
+
+@bot.on_(chain.blocks)
+async def restore_access(blk):
+    response = await bank.get(
+        "/false-alarms",
+        params=dict(
+            ecosystem=bot.identifier.ecosystem,
+            network=bot.identifier.network,
+        ),
+    )
+    assert response.status_code == 200, response.text
+
+    accounts_to_unfreeze = response.json()
+    while len(accounts_to_unfreeze) > 0:
+        stable.set_freeze(accounts_to_unfreeze[:20], False, sender=bot.signer)
+        accounts_to_unfreeze = accounts_to_unfreeze[20:]

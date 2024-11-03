@@ -49,6 +49,14 @@ class Mint(SQLModel, table=True):
         return value
 
 
+class Unfreeze(SQLModel, table=True):
+    __tablename__ = "accounts_to_unfreeze"
+
+    network: str = Field(primary_key=True)
+    account_id: int = Field(foreign_key="accounts.id", primary_key=True)
+    account: Account = Relationship()
+
+
 app = FastAPI()
 engine = create_engine(settings.DB_URI)
 SQLModel.metadata.create_all(engine)
@@ -77,6 +85,20 @@ async def index(
   <form action="/login" method="post">
     <button>
       Click here to login
+    </button>
+  </form>
+</body>
+"""
+        )
+
+    if account.sus:
+        return HTMLResponse(
+            """<!DOCTYPE html>
+<body>
+  <h1>WARNING: You access has been blocked for suspicious activities!</h1>
+  <form action="/false-alarm" method="post">
+    <button>
+      Click here to restore access
     </button>
   </form>
 </body>
@@ -199,6 +221,24 @@ async def mint(
     return f"Minting ${amount}.00 on {network}"
 
 
+@app.post("/false-alarm")
+async def unfreeze_me(
+    account_id: int = Cookie(),
+    session: Session = Depends(get_session),
+) -> str:
+    account = session.get(Account, account_id)
+
+    if account.sus:
+        account.sus = False
+        session.add(account)
+        for network_choice in settings.STABLECOIN_ADDRESSES:
+            session.add(Unfreeze(account_id=account_id, network=network_choice))
+
+        session.commit()
+
+    return RedirectResponse("/", status_code=303)
+
+
 @app.post("/withdraw")
 async def withdraw(
     amount: int = Form(default=100),
@@ -264,6 +304,28 @@ async def compliance_failure(
         account.sus = True
         session.add(account)
         session.commit()
+
+
+@internal.get("/false-alarms")
+async def get_false_alarms(
+    ecosystem: str = Query(),
+    network: str = Query(),
+    session: Session = Depends(get_session),
+) -> list[Address]:
+    # First get all the cached unfreeze requests
+    network_choice = f"{ecosystem}:{network}"
+    accounts_to_unfreeze = session.exec(
+        select(Account.address).join(Unfreeze).where(Unfreeze.network == network_choice)
+    ).all()
+
+    # Then delete all the cached unfreeze requests
+    for unfreeze_request in session.exec(
+        select(Unfreeze).where(Unfreeze.network == network_choice)
+    ).all():
+        session.delete(unfreeze_request)
+    session.commit()
+
+    return accounts_to_unfreeze
 
 
 @internal.post("/redeem/{address}")
