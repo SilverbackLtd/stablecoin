@@ -1,7 +1,6 @@
 import json
 import os
 from collections import defaultdict
-from itertools import compress
 
 from ape import chain, project
 from ape.utils import ZERO_ADDRESS
@@ -42,31 +41,28 @@ async def minted(_):
     )
     assert response.status_code == 200, response.text
 
+    # NOTE: May be multiple requests by the same person
     mints = defaultdict(lambda: 0)
-
     for address, amount in response.json():
         mints[address] += amount
 
-    call = multicall.Call()
-    [call.add(stable.is_frozen, address) for address in mints]
-
-    for address in compress(mints, call()):
-        print(f"{address} was frozen, not minting")
-        del mints[address]  # Filter out frozen accounts
-
-    if not mints:
+    # TODO: Could use multicall, but not every chain supports it?
+    if not (
+        # NOTE: Put into format for call below
+        mints := list(
+            dict(receiver=receiver, amount=amount)
+            for receiver, amount in filter(
+                # NOTE: Remove frozen accounts from minting
+                lambda t: not stable.is_frozen(t[0]),
+                iter(mints.items()),
+            )
+        )
+    ):
         return 0
 
-    # NOTE: Ape will treat tuples as structs
-    stable.mint(
-        list(
-            dict(receiver=receiver, amount=amount) for receiver, amount in mints.items()
-        ),
-        sender=bot.signer,
-        required_confirmations=0,
-    )
+    stable.mint(mints, sender=bot.signer, required_confirmations=0)
 
-    return sum(mints.values())
+    return sum(map(lambda d: d["amount"], mints))
 
 
 @bot.on_(stable.Transfer)
