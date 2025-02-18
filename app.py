@@ -1,22 +1,31 @@
 import asyncio
 
+from ape import accounts, networks, project
+from ape.api import AccountAPI
+from ape.utils import cached_property
 from eth_pydantic_types import Address
-from fastapi import Cookie, Depends, FastAPI, Form, Header, Query
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Form, Header
 from fastapi.exceptions import HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
-from pydantic import field_validator
 from pydantic_settings import BaseSettings
-from sqlmodel import (Field, Relationship, Session, SQLModel, create_engine,
-                      select)
+from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 
 class AppSettings(BaseSettings):
+    MINTER_ALIAS: str = "TEST::1"
     API_KEY: str = "fakesecret"
     DB_URI: str = "sqlite:///db.sqlite"
     # NOTE: Default address if you deploy `Stablecoin` with `test_accounts[0]` as first txn
     STABLECOIN_ADDRESSES: dict[str, Address] = {
         "ethereum:local": "0x5FbDB2315678afecb367f032d93F642f64180aa3"
     }
+
+    @cached_property
+    def signer(self) -> AccountAPI:
+        if self.MINTER_ALIAS.startswith("TEST::"):
+            return accounts.test_accounts[int(self.MINTER_ALIAS.replace("TEST::", ""))]
+
+        return accounts.load(self.MINTER_ALIAS)
 
 
 settings = AppSettings()
@@ -34,30 +43,24 @@ class Account(SQLModel, table=True):
     sus: bool = False
 
 
-class Mint(SQLModel, table=True):
-    __tablename__ = "mints"
-
-    network: str = Field(primary_key=True)
-    account_id: int = Field(foreign_key="accounts.id", primary_key=True)
-    account: Account = Relationship()
-
-    amount: int = 0  # NOTE: So that `+=` works
-
-    @field_validator("network")
-    def valid_network_choice(cls, value: str):
-        assert value in settings.STABLECOIN_ADDRESSES
-        return value
+async def mint_tokens(network: str, address: str, amount: int):
+    with networks.parse_network_choice(network):
+        stablecoin = project.Stablecoin.at(
+            settings.STABLECOIN_ADDRESSES.get(network), fetch_from_explorer=False
+        )
+        stablecoin.mint(
+            [dict(receiver=address, amount=amount)],
+            sender=settings.signer,
+        )
 
 
-class Unfreeze(SQLModel, table=True):
-    __tablename__ = "accounts_to_unfreeze"
-
-    network: str = Field(primary_key=True)
-    account_id: int = Field(foreign_key="accounts.id", primary_key=True)
-    account: Account = Relationship()
+async def lifespan(app: FastAPI):
+    app.state.stopping = asyncio.Event()
+    yield
+    app.state.stopping.set()
 
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 engine = create_engine(settings.DB_URI)
 SQLModel.metadata.create_all(engine)
 
@@ -96,11 +99,6 @@ async def index(
             """<!DOCTYPE html>
 <body>
   <h1>WARNING: You access has been blocked for suspicious activities!</h1>
-  <form action="/false-alarm" method="post">
-    <button>
-      Click here to restore access
-    </button>
-  </form>
 </body>
 """
         )
@@ -126,7 +124,7 @@ async def index(
       hx-post="/address"
       hx-target="#message"
       hx-trigger="input changed delay:500ms"
-      value="{account.address or ''}"
+      value="{account.address or ""}"
     >
   </p>
   <form hx-target="#message" hx-post="/mint">
@@ -195,8 +193,13 @@ async def mint(
     network: str = Form(),
     amount: int = Form(default=100),
     account_id: int = Cookie(),
+    *,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ) -> str:
+    if network not in settings.STABLECOIN_ADDRESSES:
+        return "Not valid network"
+
     account = session.get(Account, account_id)
     if not account.address:
         return "No address set"
@@ -209,34 +212,11 @@ async def mint(
 
     account.balance -= amount
     session.add(account)
-
-    if not (mint := session.get(Mint, (network, account_id))):
-        mint = Mint(account_id=account_id, network=network)
-
-    mint.amount += amount
-    session.add(mint)
-
     session.commit()
 
-    return f"Minting ${amount}.00 on {network}"
+    background_tasks.add_task(mint_tokens, network, account.address, amount)
 
-
-@app.post("/false-alarm")
-async def unfreeze_me(
-    account_id: int = Cookie(),
-    session: Session = Depends(get_session),
-) -> str:
-    account = session.get(Account, account_id)
-
-    if account.sus:
-        account.sus = False
-        session.add(account)
-        for network_choice in settings.STABLECOIN_ADDRESSES:
-            session.add(Unfreeze(account_id=account_id, network=network_choice))
-
-        session.commit()
-
-    return RedirectResponse("/", status_code=303)
+    return f"Minting ${amount}.00 on {network} to {account.address}"
 
 
 @app.post("/withdraw")
@@ -270,7 +250,7 @@ async def get_balance_updates(
             select(Account.balance).where(Account.id == account_id)
         )
         yield f"data: ${last_balance}.00\n\n"
-        while True:
+        while not app.state.stopping.is_set():
             if (
                 balance := session.scalar(
                     select(Account.balance).where(Account.id == account_id)
@@ -293,7 +273,7 @@ def check_cookie(x_internal_key: str = Header(default=None)):
 internal = FastAPI(dependencies=[Depends(check_cookie)])
 
 
-@internal.delete("/access/{address}")
+@internal.post("/access/{address}")
 async def compliance_failure(
     address: Address,
     session: Session = Depends(get_session),
@@ -304,28 +284,6 @@ async def compliance_failure(
         account.sus = True
         session.add(account)
         session.commit()
-
-
-@internal.get("/false-alarms")
-async def get_false_alarms(
-    ecosystem: str = Query(),
-    network: str = Query(),
-    session: Session = Depends(get_session),
-) -> list[Address]:
-    # First get all the cached unfreeze requests
-    network_choice = f"{ecosystem}:{network}"
-    accounts_to_unfreeze = session.exec(
-        select(Account.address).join(Unfreeze).where(Unfreeze.network == network_choice)
-    ).all()
-
-    # Then delete all the cached unfreeze requests
-    for unfreeze_request in session.exec(
-        select(Unfreeze).where(Unfreeze.network == network_choice)
-    ).all():
-        session.delete(unfreeze_request)
-    session.commit()
-
-    return accounts_to_unfreeze
 
 
 @internal.post("/redeem/{address}")
@@ -340,36 +298,11 @@ async def redeem_amount(
         account.balance += amount
         session.add(account)
         session.commit()
+
     else:
         raise HTTPException(
             detail=f"No account w/ address '{address}'", status_code=404
         )
-
-
-@internal.get("/mints")
-async def get_mint_requests(
-    ecosystem: str = Query(),
-    network: str = Query(),
-    session: Session = Depends(get_session),
-) -> list[tuple[Address, int]]:
-    # First get all the cached mints
-    network_choice = f"{ecosystem}:{network}"
-    mints = [
-        # NOTE: Don't forget to account for balance adjustment (token is 6 decimal places)
-        (address, amount * 10**6)
-        for address, amount in session.exec(
-            select(Account.address, Mint.amount)
-            .join(Account)
-            .where(Mint.network == network_choice)
-        ).all()
-    ]
-
-    # Then delete all the cached mints
-    for mint in session.exec(select(Mint).where(Mint.network == network_choice)).all():
-        session.delete(mint)
-    session.commit()
-
-    return mints
 
 
 app.mount("/internal", internal)
