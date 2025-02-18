@@ -3,6 +3,9 @@ plugins:
   - name: vyper
   # For testing/simulation
   - name: foundry
+  # For bots
+  - name: aws
+  - name: alchemy
 
 ethereum: &use-foundry
   sepolia-fork:
