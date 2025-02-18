@@ -1,3 +1,4 @@
 .build/
+.silverback-images/
 .silverback-sessions/
 db.sqlite
