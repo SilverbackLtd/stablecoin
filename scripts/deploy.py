@@ -1,19 +1,12 @@
-import json
-from pathlib import Path
-
 import click
 from ape import accounts, networks, project
 from ape.cli import account_option
 
-PROJECT_ROOT = Path(__file__).parent.parent
-MINTER = json.loads((PROJECT_ROOT / "minter.json").read_text())["address"]
-COMPLIANCE = json.loads((PROJECT_ROOT / "compliance.json").read_text())["address"]
-
 
 @click.command()
-@click.option("-m", "--minter", default=MINTER)
-@click.option("-c", "--compliance", default=COMPLIANCE)
-@click.option("-n", "--network", "network_selections", multiple=True)
+@click.option("-m", "--minter", default="TEST::1")
+@click.option("-c", "--compliance", default="TEST::2")
+@click.option("-n", "--network", "network_selections", multiple=True, required=True)
 @account_option()
 def cli(minter, compliance, network_selections, account):
     """Deploy the Stablecoin on multiple chains"""
