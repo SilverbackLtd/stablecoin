@@ -58,7 +58,7 @@ Now you can visit the bank by going to http://127.0.0.1:8000 in the browser.
 Next, you want to run the redemptions bot via:
 
 ```sh
-silverback run redemptions --account TEST::1 --network :local
+silverback run redemptions --network :local
 ```
 
 And also the compliance bot via (optional):
