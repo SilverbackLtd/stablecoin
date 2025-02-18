@@ -49,7 +49,8 @@ async def mint_tokens(network: str, address: str, amount: int):
             settings.STABLECOIN_ADDRESSES.get(network), fetch_from_explorer=False
         )
         stablecoin.mint(
-            [dict(receiver=address, amount=amount)],
+            # NOTE: Don't forget to adjust for decimals
+            [dict(receiver=address, amount=(amount * 10**6))],
             sender=settings.signer,
         )
 
