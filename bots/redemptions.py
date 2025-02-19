@@ -12,12 +12,6 @@ STABLECOIN_ADDRESSES = json.loads(
         '{"ethereum:local":"0x5FbDB2315678afecb367f032d93F642f64180aa3"}',
     )
 )
-print(
-    "Watching addresses:\n",
-    "\n".join(
-        f"{network}: {address}" for network, address in STABLECOIN_ADDRESSES.items()
-    ),
-)
 
 BANK_URI = os.environ.get("BANK_URI", "http://127.0.0.1:8000")
 BANK_API_KEY = os.environ.get("BANK_API_KEY", "fakesecret")
@@ -25,12 +19,12 @@ bank = AsyncClient(
     base_url=f"{BANK_URI}/internal",
     headers={"X-Internal-Key": BANK_API_KEY},
 )
-print(f"Connected to '{BANK_URI}' using API_KEY='{BANK_API_KEY}'")
 
 
 bot = SilverbackBot()
 stable = project.Stablecoin.at(
-    STABLECOIN_ADDRESSES[f"{bot.identifier.ecosystem}:{bot.identifier.network}"]
+    STABLECOIN_ADDRESSES[f"{bot.identifier.ecosystem}:{bot.identifier.network}"],
+    fetch_from_explorer=False,
 )
 
 
