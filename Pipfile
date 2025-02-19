@@ -1,0 +1,7 @@
+[packages]
+eth-ape = "~=0.8"
+ape-aws = ">=0.8.0b1"
+ape-vyper = "~=0.8"
+eth-pydantic-types = "~=0.1"
+fastapi = { version = "~=0.115", extras = ["standard"] }
+pydantic-settings = "~=2.7"
