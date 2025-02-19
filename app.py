@@ -51,6 +51,7 @@ async def mint_tokens(network: str, address: Address, amount: int):
             # NOTE: Don't forget to adjust for decimals
             [dict(receiver=address, amount=(amount * 10**6))],
             sender=settings.signer,
+            required_confirmations=0,  # Don't wait for receipt
         )
 
 
