@@ -29,7 +29,6 @@ class AppSettings(BaseSettings):
 
 
 settings = AppSettings()
-bank_accounts: dict[uuid.UUID, "BankAccount"] = {}
 
 
 class BankAccount(BaseModel):
@@ -56,6 +55,7 @@ async def mint_tokens(network: str, address: Address, amount: int):
 
 
 async def lifespan(app: FastAPI):
+    app.state.bank_accounts = {}
     app.state.running = True
     yield
     app.state.running = False
@@ -73,7 +73,7 @@ def convert_to_option(ecosystem_network: str):
 async def index(
     account_id: uuid.UUID | None = Cookie(default=None),
 ):
-    if account_id is None or not (account := bank_accounts.get(account_id)):
+    if account_id is None or not (account := app.state.bank_accounts.get(account_id)):
         return HTMLResponse(
             """<!DOCTYPE html>
 <body>
@@ -137,9 +137,9 @@ async def login(
     account_id: uuid.UUID | None = Cookie(default=None),
 ):
     response = RedirectResponse("/", 303)
-    if account_id is None or not bank_accounts.get(account_id):
+    if account_id is None or not app.state.bank_accounts.get(account_id):
         new_account = BankAccount()
-        bank_accounts[new_account.id] = new_account
+        app.state.bank_accounts[new_account.id] = new_account
         response.set_cookie("account_id", str(new_account.id))
 
     return response
@@ -150,13 +150,13 @@ async def deposit(
     amount: int = Form(default=100),
     account_id: uuid.UUID = Cookie(),
 ):
-    if account_id not in bank_accounts:
+    if account_id not in app.state.bank_accounts:
         return "Not logged in"
 
-    if bank_accounts[account_id].sus:
+    if app.state.bank_accounts[account_id].sus:
         return "You have failed our compliance"
 
-    bank_accounts[account_id].balance += amount
+    app.state.bank_accounts[account_id].balance += amount
 
     return f"Deposited ${amount}.00"
 
@@ -166,10 +166,10 @@ async def set_address(
     address: Address = Form(),
     account_id: uuid.UUID = Cookie(),
 ):
-    if account_id not in bank_accounts:
+    if account_id not in app.state.bank_accounts:
         return "Not logged in"
 
-    bank_accounts[account_id].address = address
+    app.state.bank_accounts[account_id].address = address
 
     return "Updated address"
 
@@ -185,19 +185,19 @@ async def mint(
     if network not in settings.STABLECOIN_ADDRESSES:
         return "Not valid network"
 
-    if account_id not in bank_accounts:
+    if account_id not in app.state.bank_accounts:
         return "Not logged in"
 
-    if not (address := bank_accounts[account_id].address):
+    if not (address := app.state.bank_accounts[account_id].address):
         return "No address set"
 
-    if amount > bank_accounts[account_id].balance:
+    if amount > app.state.bank_accounts[account_id].balance:
         return "Insufficent balance"
 
-    if bank_accounts[account_id].sus:
+    if app.state.bank_accounts[account_id].sus:
         return "You have failed our compliance"
 
-    bank_accounts[account_id].balance -= amount
+    app.state.bank_accounts[account_id].balance -= amount
 
     background_tasks.add_task(mint_tokens, network, address, amount)
 
@@ -209,28 +209,28 @@ async def withdraw(
     amount: int = Form(default=100),
     account_id: uuid.UUID = Cookie(),
 ) -> str:
-    if account_id not in bank_accounts:
+    if account_id not in app.state.bank_accounts:
         return "Not logged in"
 
-    if amount > bank_accounts[account_id].balance:
+    if amount > app.state.bank_accounts[account_id].balance:
         return "Insufficent balance"
 
-    if bank_accounts[account_id].sus:
+    if app.state.bank_accounts[account_id].sus:
         return "You have failed our compliance"
 
-    bank_accounts[account_id].balance -= amount
+    app.state.bank_accounts[account_id].balance -= amount
 
     return f"Withdrew ${amount}.00"
 
 
 @app.get("/balance")
 async def get_balance_updates(account_id: uuid.UUID = Cookie()) -> StreamingResponse:
-    if account_id not in bank_accounts:
+    if account_id not in app.state.bank_accounts:
         raise HTTPException(detail="Account not found", status_code=404)
 
     async def balance_updates():
         while app.state.running:
-            yield f"data: ${bank_accounts[account_id].balance}.00\n\n"
+            yield f"data: ${app.state.bank_accounts[account_id].balance}.00\n\n"
             await asyncio.sleep(1)
 
     return StreamingResponse(balance_updates(), media_type="text/event-stream")
@@ -247,14 +247,14 @@ internal = FastAPI(dependencies=[Depends(check_cookie)])
 
 @internal.post("/access/{address}")
 async def compliance_failure(address: Address):
-    account_id = next(a.id for a in bank_accounts.values() if a.address == address)
-    bank_accounts[account_id].sus = True
+    account_id = next(a.id for a in app.state.bank_accounts.values() if a.address == address)
+    app.state.bank_accounts[account_id].sus = True
 
 
 @internal.post("/redeem/{address}")
 async def redeem_amount(address: Address, amount: int):
-    account_id = next(a.id for a in bank_accounts.values() if a.address == address)
-    bank_accounts[account_id].balance += amount
+    account_id = next(a.id for a in app.state.bank_accounts.values() if a.address == address)
+    app.state.bank_accounts[account_id].balance += amount
 
 
 app.mount("/internal", internal)
