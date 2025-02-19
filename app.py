@@ -8,8 +8,8 @@ from eth_pydantic_types import Address
 from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Form, Header
 from fastapi.exceptions import HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
-from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 
 class AppSettings(BaseSettings):
@@ -19,6 +19,7 @@ class AppSettings(BaseSettings):
     STABLECOIN_ADDRESSES: dict[str, Address] = {
         "ethereum:local": "0x5FbDB2315678afecb367f032d93F642f64180aa3"
     }
+    DB_URI: str = "sqlite:///db.sqlite"
 
     @cached_property
     def signer(self) -> AccountAPI:
@@ -29,13 +30,19 @@ class AppSettings(BaseSettings):
 
 
 settings = AppSettings()
+engine = create_engine(settings.DB_URI)
 
 
-class BankAccount(BaseModel):
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+
+class BankAccount(SQLModel, table=True):
     # NOTE: Autoincremented account ID
-    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    id: uuid.UUID = Field(primary_key=True, default_factory=uuid.uuid4)
     balance: int = Field(ge=0, default=0)
-    address: Address | None = None
+    address: Address | None = Field(index=True, default=None)
 
     # Compliance
     sus: bool = False
@@ -55,7 +62,7 @@ async def mint_tokens(network: str, address: Address, amount: int):
 
 
 async def lifespan(app: FastAPI):
-    app.state.bank_accounts = {}
+    SQLModel.metadata.create_all(engine)
     app.state.running = True
     yield
     app.state.running = False
@@ -72,8 +79,9 @@ def convert_to_option(ecosystem_network: str):
 @app.get("/")
 async def index(
     account_id: uuid.UUID | None = Cookie(default=None),
+    session: Session = Depends(get_session),
 ):
-    if account_id is None or not (account := app.state.bank_accounts.get(account_id)):
+    if not (account := session.get(BankAccount, account_id)):
         return HTMLResponse(
             """<!DOCTYPE html>
 <body>
@@ -135,11 +143,15 @@ async def index(
 @app.post("/login")
 async def login(
     account_id: uuid.UUID | None = Cookie(default=None),
+    session: Session = Depends(get_session),
 ):
     response = RedirectResponse("/", 303)
-    if account_id is None or not app.state.bank_accounts.get(account_id):
+
+    if not (account := session.get(BankAccount, account_id)):
         new_account = BankAccount()
-        app.state.bank_accounts[new_account.id] = new_account
+        session.add(new_account)
+        session.commit()
+
         response.set_cookie("account_id", str(new_account.id))
 
     return response
@@ -149,14 +161,17 @@ async def login(
 async def deposit(
     amount: int = Form(default=100),
     account_id: uuid.UUID = Cookie(),
+    session: Session = Depends(get_session),
 ):
-    if account_id not in app.state.bank_accounts:
+    if not (account := session.get(BankAccount, account_id)):
         return "Not logged in"
 
-    if app.state.bank_accounts[account_id].sus:
+    if account.sus:
         return "You have failed our compliance"
 
-    app.state.bank_accounts[account_id].balance += amount
+    account.balance += amount
+    session.add(account)
+    session.commit()
 
     return f"Deposited ${amount}.00"
 
@@ -165,11 +180,14 @@ async def deposit(
 async def set_address(
     address: Address = Form(),
     account_id: uuid.UUID = Cookie(),
+    session: Session = Depends(get_session),
 ):
-    if account_id not in app.state.bank_accounts:
+    if not (account := session.get(BankAccount, account_id)):
         return "Not logged in"
 
-    app.state.bank_accounts[account_id].address = address
+    account.address = address
+    session.add(account)
+    session.commit()
 
     return "Updated address"
 
@@ -179,25 +197,28 @@ async def mint(
     network: str = Form(),
     amount: int = Form(default=100),
     account_id: uuid.UUID = Cookie(),
+    session: Session = Depends(get_session),
     *,
     background_tasks: BackgroundTasks,
 ) -> str:
     if network not in settings.STABLECOIN_ADDRESSES:
         return "Not valid network"
 
-    if account_id not in app.state.bank_accounts:
+    if not (account := session.get(BankAccount, account_id)):
         return "Not logged in"
 
-    if not (address := app.state.bank_accounts[account_id].address):
+    if not (address := account.address):
         return "No address set"
 
-    if amount > app.state.bank_accounts[account_id].balance:
+    if amount > account.balance:
         return "Insufficent balance"
 
-    if app.state.bank_accounts[account_id].sus:
+    if account.sus:
         return "You have failed our compliance"
 
-    app.state.bank_accounts[account_id].balance -= amount
+    account.balance -= amount
+    session.add(account)
+    session.commit()
 
     background_tasks.add_task(mint_tokens, network, address, amount)
 
@@ -208,29 +229,38 @@ async def mint(
 async def withdraw(
     amount: int = Form(default=100),
     account_id: uuid.UUID = Cookie(),
+    session: Session = Depends(get_session),
 ) -> str:
-    if account_id not in app.state.bank_accounts:
+    if not (account := session.get(BankAccount, account_id)):
         return "Not logged in"
 
-    if amount > app.state.bank_accounts[account_id].balance:
+    if amount > account.balance:
         return "Insufficent balance"
 
-    if app.state.bank_accounts[account_id].sus:
+    if account.sus:
         return "You have failed our compliance"
 
-    app.state.bank_accounts[account_id].balance -= amount
+    account.balance -= amount
+    session.add(account)
+    session.commit()
 
     return f"Withdrew ${amount}.00"
 
 
 @app.get("/balance")
-async def get_balance_updates(account_id: uuid.UUID = Cookie()) -> StreamingResponse:
-    if account_id not in app.state.bank_accounts:
+async def get_balance_updates(
+    account_id: uuid.UUID = Cookie(),
+    session: Session = Depends(get_session),
+) -> StreamingResponse:
+    if not session.get(BankAccount, account_id):
         raise HTTPException(detail="Account not found", status_code=404)
 
     async def balance_updates():
         while app.state.running:
-            yield f"data: ${app.state.bank_accounts[account_id].balance}.00\n\n"
+            balance = session.scalar(
+                select(BankAccount.balance).where(BankAccount.id == account_id)
+            )
+            yield f"data: ${balance}.00\n\n"
             await asyncio.sleep(1)
 
     return StreamingResponse(balance_updates(), media_type="text/event-stream")
@@ -246,15 +276,38 @@ internal = FastAPI(dependencies=[Depends(check_cookie)])
 
 
 @internal.post("/access/{address}")
-async def compliance_failure(address: Address):
-    account_id = next(a.id for a in app.state.bank_accounts.values() if a.address == address)
-    app.state.bank_accounts[account_id].sus = True
+async def compliance_failure(
+    address: Address,
+    session: Session = Depends(get_session),
+):
+    if not (
+        account := session.exec(
+            select(BankAccount).where(BankAccount.address == address)
+        ).first()
+    ):
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    account.sus = True
+    session.add(account)
+    session.commit()
 
 
 @internal.post("/redeem/{address}")
-async def redeem_amount(address: Address, amount: int):
-    account_id = next(a.id for a in app.state.bank_accounts.values() if a.address == address)
-    app.state.bank_accounts[account_id].balance += amount
+async def redeem_amount(
+    address: Address,
+    amount: int,
+    session: Session = Depends(get_session),
+):
+    if not (
+        account := session.exec(
+            select(BankAccount).where(BankAccount.address == address)
+        ).first()
+    ):
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    account.balance += amount
+    session.add(account)
+    session.commit()
 
 
 app.mount("/internal", internal)

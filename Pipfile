@@ -5,3 +5,4 @@ ape-vyper = "~=0.8"
 eth-pydantic-types = "~=0.1"
 fastapi = { version = "~=0.115", extras = ["standard"] }
 pydantic-settings = "~=2.7"
+sqlmodel = "~=0.0.22"
