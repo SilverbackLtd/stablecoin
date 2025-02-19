@@ -1,70 +1,66 @@
 import asyncio
+import uuid
 
+from ape import accounts, networks, project
+from ape.api import AccountAPI
+from ape.utils import cached_property
 from eth_pydantic_types import Address
-from fastapi import Cookie, Depends, FastAPI, Form, Header, Query
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Form, Header
 from fastapi.exceptions import HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
-from pydantic import field_validator
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
-from sqlmodel import (Field, Relationship, Session, SQLModel, create_engine,
-                      select)
 
 
 class AppSettings(BaseSettings):
+    MINTER_ALIAS: str = "TEST::1"
     API_KEY: str = "fakesecret"
-    DB_URI: str = "sqlite:///db.sqlite"
     # NOTE: Default address if you deploy `Stablecoin` with `test_accounts[0]` as first txn
     STABLECOIN_ADDRESSES: dict[str, Address] = {
         "ethereum:local": "0x5FbDB2315678afecb367f032d93F642f64180aa3"
     }
 
+    @cached_property
+    def signer(self) -> AccountAPI:
+        if self.MINTER_ALIAS.startswith("TEST::"):
+            return accounts.test_accounts[int(self.MINTER_ALIAS.replace("TEST::", ""))]
+
+        return accounts.load(self.MINTER_ALIAS)
+
 
 settings = AppSettings()
+bank_accounts: dict[uuid.UUID, "BankAccount"] = {}
 
 
-class Account(SQLModel, table=True):
-    __tablename__ = "accounts"
-
+class BankAccount(BaseModel):
     # NOTE: Autoincremented account ID
-    id: int | None = Field(primary_key=True, default=None)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
     balance: int = Field(ge=0, default=0)
-    address: str | None = None
+    address: Address | None = None
 
     # Compliance
     sus: bool = False
 
 
-class Mint(SQLModel, table=True):
-    __tablename__ = "mints"
-
-    network: str = Field(primary_key=True)
-    account_id: int = Field(foreign_key="accounts.id", primary_key=True)
-    account: Account = Relationship()
-
-    amount: int = 0  # NOTE: So that `+=` works
-
-    @field_validator("network")
-    def valid_network_choice(cls, value: str):
-        assert value in settings.STABLECOIN_ADDRESSES
-        return value
+async def mint_tokens(network: str, address: Address, amount: int):
+    with networks.parse_network_choice(network):
+        stablecoin = project.Stablecoin.at(
+            settings.STABLECOIN_ADDRESSES.get(network), fetch_from_explorer=False
+        )
+        stablecoin.mint(
+            # NOTE: Don't forget to adjust for decimals
+            [dict(receiver=address, amount=(amount * 10**6))],
+            sender=settings.signer,
+        )
 
 
-class Unfreeze(SQLModel, table=True):
-    __tablename__ = "accounts_to_unfreeze"
-
-    network: str = Field(primary_key=True)
-    account_id: int = Field(foreign_key="accounts.id", primary_key=True)
-    account: Account = Relationship()
+async def lifespan(app: FastAPI):
+    app.state.running = True
+    yield
+    app.state.running = False
 
 
-app = FastAPI()
-engine = create_engine(settings.DB_URI)
-SQLModel.metadata.create_all(engine)
-
-
-def get_session():
-    with Session(engine) as session:
-        yield session
+app = FastAPI(lifespan=lifespan)
 
 
 def convert_to_option(ecosystem_network: str):
@@ -74,10 +70,9 @@ def convert_to_option(ecosystem_network: str):
 
 @app.get("/")
 async def index(
-    account_id: int | None = Cookie(default=None),
-    session: Session = Depends(get_session),
+    account_id: uuid.UUID | None = Cookie(default=None),
 ):
-    if not (account := session.get(Account, account_id)):
+    if account_id is None or not (account := bank_accounts.get(account_id)):
         return HTMLResponse(
             """<!DOCTYPE html>
 <body>
@@ -96,11 +91,6 @@ async def index(
             """<!DOCTYPE html>
 <body>
   <h1>WARNING: You access has been blocked for suspicious activities!</h1>
-  <form action="/false-alarm" method="post">
-    <button>
-      Click here to restore access
-    </button>
-  </form>
 </body>
 """
         )
@@ -126,7 +116,7 @@ async def index(
       hx-post="/address"
       hx-target="#message"
       hx-trigger="input changed delay:500ms"
-      value="{account.address or ''}"
+      value="{account.address or ""}"
     >
   </p>
   <form hx-target="#message" hx-post="/mint">
@@ -143,15 +133,12 @@ async def index(
 
 @app.post("/login")
 async def login(
-    account_id: int | None = Cookie(default=None),
-    session: Session = Depends(get_session),
+    account_id: uuid.UUID | None = Cookie(default=None),
 ):
     response = RedirectResponse("/", 303)
-    if not session.get(Account, account_id):
-        new_account = Account()
-        session.add(new_account)
-        session.commit()
-        session.refresh(new_account)
+    if account_id is None or not bank_accounts.get(account_id):
+        new_account = BankAccount()
+        bank_accounts[new_account.id] = new_account
         response.set_cookie("account_id", str(new_account.id))
 
     return response
@@ -160,17 +147,15 @@ async def login(
 @app.post("/deposit")
 async def deposit(
     amount: int = Form(default=100),
-    account_id: int = Cookie(),
-    session: Session = Depends(get_session),
+    account_id: uuid.UUID = Cookie(),
 ):
-    account = session.get(Account, account_id)
-    if account.sus:
+    if account_id not in bank_accounts:
+        return "Not logged in"
+
+    if bank_accounts[account_id].sus:
         return "You have failed our compliance"
 
-    account.balance += amount
-    session.add(account)
-    session.commit()
-    session.refresh(account)
+    bank_accounts[account_id].balance += amount
 
     return f"Deposited ${amount}.00"
 
@@ -178,14 +163,12 @@ async def deposit(
 @app.post("/address")
 async def set_address(
     address: Address = Form(),
-    account_id: int = Cookie(),
-    session: Session = Depends(get_session),
+    account_id: uuid.UUID = Cookie(),
 ):
-    account = session.get(Account, account_id)
-    account.address = address
-    session.add(account)
-    session.commit()
-    session.refresh(account)
+    if account_id not in bank_accounts:
+        return "Not logged in"
+
+    bank_accounts[account_id].address = address
 
     return "Updated address"
 
@@ -194,91 +177,59 @@ async def set_address(
 async def mint(
     network: str = Form(),
     amount: int = Form(default=100),
-    account_id: int = Cookie(),
-    session: Session = Depends(get_session),
+    account_id: uuid.UUID = Cookie(),
+    *,
+    background_tasks: BackgroundTasks,
 ) -> str:
-    account = session.get(Account, account_id)
-    if not account.address:
+    if network not in settings.STABLECOIN_ADDRESSES:
+        return "Not valid network"
+
+    if account_id not in bank_accounts:
+        return "Not logged in"
+
+    if not (address := bank_accounts[account_id].address):
         return "No address set"
 
-    if amount > account.balance:
+    if amount > bank_accounts[account_id].balance:
         return "Insufficent balance"
 
-    if account.sus:
+    if bank_accounts[account_id].sus:
         return "You have failed our compliance"
 
-    account.balance -= amount
-    session.add(account)
+    bank_accounts[account_id].balance -= amount
 
-    if not (mint := session.get(Mint, (network, account_id))):
-        mint = Mint(account_id=account_id, network=network)
+    background_tasks.add_task(mint_tokens, network, address, amount)
 
-    mint.amount += amount
-    session.add(mint)
-
-    session.commit()
-
-    return f"Minting ${amount}.00 on {network}"
-
-
-@app.post("/false-alarm")
-async def unfreeze_me(
-    account_id: int = Cookie(),
-    session: Session = Depends(get_session),
-) -> str:
-    account = session.get(Account, account_id)
-
-    if account.sus:
-        account.sus = False
-        session.add(account)
-        for network_choice in settings.STABLECOIN_ADDRESSES:
-            session.add(Unfreeze(account_id=account_id, network=network_choice))
-
-        session.commit()
-
-    return RedirectResponse("/", status_code=303)
+    return f"Minting ${amount}.00 on {network} to {address}"
 
 
 @app.post("/withdraw")
 async def withdraw(
     amount: int = Form(default=100),
-    account_id: int = Cookie(),
-    session: Session = Depends(get_session),
+    account_id: uuid.UUID = Cookie(),
 ) -> str:
-    account = session.get(Account, account_id)
+    if account_id not in bank_accounts:
+        return "Not logged in"
 
-    if amount > account.balance:
+    if amount > bank_accounts[account_id].balance:
         return "Insufficent balance"
 
-    if account.sus:
+    if bank_accounts[account_id].sus:
         return "You have failed our compliance"
 
-    account.balance -= amount
-    session.add(account)
-    session.commit()
+    bank_accounts[account_id].balance -= amount
 
     return f"Withdrew ${amount}.00"
 
 
 @app.get("/balance")
-async def get_balance_updates(
-    account_id: int = Cookie(),
-    session: Session = Depends(get_session),
-) -> StreamingResponse:
-    async def balance_updates():
-        last_balance = session.scalar(
-            select(Account.balance).where(Account.id == account_id)
-        )
-        yield f"data: ${last_balance}.00\n\n"
-        while True:
-            if (
-                balance := session.scalar(
-                    select(Account.balance).where(Account.id == account_id)
-                )
-            ) != last_balance:
-                yield f"data: ${balance}.00\n\n"
-                last_balance = balance
+async def get_balance_updates(account_id: uuid.UUID = Cookie()) -> StreamingResponse:
+    if account_id not in bank_accounts:
+        raise HTTPException(detail="Account not found", status_code=404)
 
+    async def balance_updates():
+        while app.state.running:
+            yield f"data: ${bank_accounts[account_id].balance}.00\n\n"
             await asyncio.sleep(1)
 
     return StreamingResponse(balance_updates(), media_type="text/event-stream")
@@ -293,83 +244,16 @@ def check_cookie(x_internal_key: str = Header(default=None)):
 internal = FastAPI(dependencies=[Depends(check_cookie)])
 
 
-@internal.delete("/access/{address}")
-async def compliance_failure(
-    address: Address,
-    session: Session = Depends(get_session),
-):
-    if account := session.exec(
-        select(Account).where(Account.address == address)
-    ).one_or_none():
-        account.sus = True
-        session.add(account)
-        session.commit()
-
-
-@internal.get("/false-alarms")
-async def get_false_alarms(
-    ecosystem: str = Query(),
-    network: str = Query(),
-    session: Session = Depends(get_session),
-) -> list[Address]:
-    # First get all the cached unfreeze requests
-    network_choice = f"{ecosystem}:{network}"
-    accounts_to_unfreeze = session.exec(
-        select(Account.address).join(Unfreeze).where(Unfreeze.network == network_choice)
-    ).all()
-
-    # Then delete all the cached unfreeze requests
-    for unfreeze_request in session.exec(
-        select(Unfreeze).where(Unfreeze.network == network_choice)
-    ).all():
-        session.delete(unfreeze_request)
-    session.commit()
-
-    return accounts_to_unfreeze
+@internal.post("/access/{address}")
+async def compliance_failure(address: Address):
+    account_id = next(a.id for a in bank_accounts.values() if a.address == address)
+    bank_accounts[account_id].sus = True
 
 
 @internal.post("/redeem/{address}")
-async def redeem_amount(
-    address: Address,
-    amount: int,
-    session: Session = Depends(get_session),
-):
-    if account := session.exec(
-        select(Account).where(Account.address == address)
-    ).one_or_none():
-        account.balance += amount
-        session.add(account)
-        session.commit()
-    else:
-        raise HTTPException(
-            detail=f"No account w/ address '{address}'", status_code=404
-        )
-
-
-@internal.get("/mints")
-async def get_mint_requests(
-    ecosystem: str = Query(),
-    network: str = Query(),
-    session: Session = Depends(get_session),
-) -> list[tuple[Address, int]]:
-    # First get all the cached mints
-    network_choice = f"{ecosystem}:{network}"
-    mints = [
-        # NOTE: Don't forget to account for balance adjustment (token is 6 decimal places)
-        (address, amount * 10**6)
-        for address, amount in session.exec(
-            select(Account.address, Mint.amount)
-            .join(Account)
-            .where(Mint.network == network_choice)
-        ).all()
-    ]
-
-    # Then delete all the cached mints
-    for mint in session.exec(select(Mint).where(Mint.network == network_choice)).all():
-        session.delete(mint)
-    session.commit()
-
-    return mints
+async def redeem_amount(address: Address, amount: int):
+    account_id = next(a.id for a in bank_accounts.values() if a.address == address)
+    bank_accounts[account_id].balance += amount
 
 
 app.mount("/internal", internal)
