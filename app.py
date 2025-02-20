@@ -3,7 +3,7 @@ import uuid
 
 from ape import accounts, networks, project
 from ape.api import AccountAPI
-from ape.utils import cached_property
+from ape.utils import ZERO_ADDRESS, cached_property
 from eth_pydantic_types import Address
 from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Form, Header
 from fastapi.exceptions import HTTPException
@@ -147,7 +147,7 @@ async def login(
 ):
     response = RedirectResponse("/", 303)
 
-    if not (account := session.get(BankAccount, account_id)):
+    if not session.get(BankAccount, account_id):
         new_account = BankAccount()
         session.add(new_account)
         session.commit()
@@ -207,7 +207,7 @@ async def mint(
     if not (account := session.get(BankAccount, account_id)):
         return "Not logged in"
 
-    if not (address := account.address):
+    if not (address := account.address) or address == ZERO_ADDRESS:
         return "No address set"
 
     if amount > account.balance:
