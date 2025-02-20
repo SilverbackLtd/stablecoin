@@ -1,5 +1,7 @@
 import asyncio
 import uuid
+from collections import defaultdict
+from typing import ClassVar
 
 from ape import accounts, networks, project
 from ape.api import AccountAPI
@@ -39,6 +41,8 @@ def get_session():
 
 
 class BankAccount(SQLModel, table=True):
+    activity: ClassVar[dict[uuid.UUID, asyncio.Queue]] = defaultdict(asyncio.Queue)
+
     # NOTE: Autoincremented account ID
     id: uuid.UUID = Field(primary_key=True, default_factory=uuid.uuid4)
     balance: int = Field(ge=0, default=0)
@@ -46,19 +50,6 @@ class BankAccount(SQLModel, table=True):
 
     # Compliance
     sus: bool = False
-
-
-async def mint_tokens(network: str, address: Address, amount: int):
-    with networks.parse_network_choice(network):
-        stablecoin = project.Stablecoin.at(
-            settings.STABLECOIN_ADDRESSES.get(network), fetch_from_explorer=False
-        )
-        stablecoin.mint(
-            # NOTE: Don't forget to adjust for decimals
-            [dict(receiver=address, amount=(amount * 10**6))],
-            sender=settings.signer,
-            required_confirmations=0,  # Don't wait for receipt
-        )
 
 
 async def lifespan(app: FastAPI):
@@ -74,6 +65,32 @@ app = FastAPI(lifespan=lifespan)
 def convert_to_option(ecosystem_network: str):
     ecosystem, network = ecosystem_network.split(":")
     return f'<option value="{ecosystem_network}">{ecosystem} {network}</option>'
+
+
+def convert_to_notification(message: str) -> HTMLResponse:
+    return f'<li x-data><p>{message} <button x-on:click="$root.remove()">x</button></p></li>'
+
+
+async def mint_tokens(account_id: uuid.UUID, network: str, amount: int):
+    with Session(engine) as session:
+        if not (account := session.get(BankAccount, account_id)):
+            return
+
+        with networks.parse_network_choice(network):
+            stablecoin = project.Stablecoin.at(
+                settings.STABLECOIN_ADDRESSES.get(network), fetch_from_explorer=False
+            )
+            tx = stablecoin.mint(
+                # NOTE: Don't forget to adjust for decimals
+                [dict(receiver=account.address, amount=(amount * 10**6))],
+                sender=settings.signer,
+                required_confirmations=0,  # Don't wait for receipt
+            )
+            await BankAccount.activity[account.id].put(
+                convert_to_notification(
+                    f"Minted ${amount}.00 to {account.address} on '{network}': {tx.txn_hash}"
+                )
+            )
 
 
 @app.get("/")
@@ -108,34 +125,51 @@ async def index(
     return HTMLResponse(
         f"""<!DOCTYPE html>
 <head>
-  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
-  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+  <script src="https://unpkg.com/alpinejs@3.14" defer></script>
+  <script src="https://unpkg.com/htmx.org@2.0"></script>
+  <script src="https://unpkg.com/htmx-ext-sse@2.2/sse.js"></script>
 </head>
-<body>
+<body hx-ext="sse" sse-connect="/activity" x-data>
   <h1>Welcome to Wurst Bank!</h1>
-  <p hx-ext="sse" sse-connect="/balance">
-    Your balance: <span sse-swap="message">Loading...</span>
+  <p>
+    Your balance: <span sse-swap="balance">Loading...</span>
   </p>
-  <button hx-target="#message" hx-post="/deposit">Deposit some</button>
-  <button hx-target="#message" hx-post="/withdraw">Withdraw some</button>
+  <button
+    hx-post="/deposit"
+    hx-target="#notifications"
+    hx-swap="afterbegin"
+  >
+    Deposit some
+  </button>
+  <button
+    hx-post="/withdraw"
+    hx-target="#notifications"
+    hx-swap="afterbegin"
+  >
+    Withdraw some
+  </button>
   <p>
     Your Address:
     <input
       name="address"
       hx-post="/address"
-      hx-target="#message"
+      hx-target="#notifications"
+      hx-swap="afterbegin"
       hx-trigger="input changed delay:500ms"
       value="{account.address or ""}"
     >
   </p>
-  <form hx-target="#message" hx-post="/mint">
+  <form hx-post="/mint" hx-target="#notifications" hx-swap="afterbegin">
     <select name="network">{network_options}</select>
     <button>Mint some stables</button>
   </form>
-  <p id="message"></p>
-  <script>
-    document.body.addEventListener('htmx:sseBeforeMessage', console.log)
-  </script>
+  <br/>
+  <h3>
+    Notifications
+    <button x-on:click="$refs.notifications.textContent =''">Clear</button>
+  </h3>
+  <ul x-ref="notifications" id="notifications" sse-swap="notification" hx-swap="afterbegin">
+  </ul>
 </body>"""
     )
 
@@ -162,18 +196,18 @@ async def deposit(
     amount: int = Form(default=100),
     account_id: uuid.UUID = Cookie(),
     session: Session = Depends(get_session),
-):
+) -> HTMLResponse:
     if not (account := session.get(BankAccount, account_id)):
-        return "Not logged in"
+        return HTMLResponse(convert_to_notification("Not logged in"))
 
     if account.sus:
-        return "You have failed our compliance"
+        return HTMLResponse(convert_to_notification("You have failed our compliance"))
 
     account.balance += amount
     session.add(account)
     session.commit()
 
-    return f"Deposited ${amount}.00"
+    return HTMLResponse(convert_to_notification(f"Deposited ${amount}.00"))
 
 
 @app.post("/address")
@@ -181,15 +215,15 @@ async def set_address(
     address: Address = Form(),
     account_id: uuid.UUID = Cookie(),
     session: Session = Depends(get_session),
-):
+) -> HTMLResponse:
     if not (account := session.get(BankAccount, account_id)):
-        return "Not logged in"
+        return HTMLResponse(convert_to_notification("Not logged in"))
 
     account.address = address
     session.add(account)
     session.commit()
 
-    return "Updated address"
+    return HTMLResponse(convert_to_notification("Updated address"))
 
 
 @app.post("/mint")
@@ -200,29 +234,31 @@ async def mint(
     session: Session = Depends(get_session),
     *,
     background_tasks: BackgroundTasks,
-) -> str:
+) -> HTMLResponse:
     if network not in settings.STABLECOIN_ADDRESSES:
-        return "Not valid network"
+        return HTMLResponse(convert_to_notification("Not valid network"))
 
     if not (account := session.get(BankAccount, account_id)):
-        return "Not logged in"
+        return HTMLResponse(convert_to_notification("Not logged in"))
 
     if not (address := account.address) or address == ZERO_ADDRESS:
-        return "No address set"
+        return HTMLResponse(convert_to_notification("No address set"))
 
     if amount > account.balance:
-        return "Insufficent balance"
+        return HTMLResponse(convert_to_notification("Insufficent balance"))
 
     if account.sus:
-        return "You have failed our compliance"
+        return HTMLResponse(convert_to_notification("You have failed our compliance"))
 
     account.balance -= amount
     session.add(account)
     session.commit()
 
-    background_tasks.add_task(mint_tokens, network, address, amount)
+    background_tasks.add_task(mint_tokens, account_id, network, amount)
 
-    return f"Minting ${amount}.00 on {network} to {address}"
+    return HTMLResponse(
+        convert_to_notification(f"Minting ${amount}.00 on {network} to {address}")
+    )
 
 
 @app.post("/withdraw")
@@ -230,40 +266,49 @@ async def withdraw(
     amount: int = Form(default=100),
     account_id: uuid.UUID = Cookie(),
     session: Session = Depends(get_session),
-) -> str:
+) -> HTMLResponse:
     if not (account := session.get(BankAccount, account_id)):
-        return "Not logged in"
+        return HTMLResponse(convert_to_notification("Not logged in"))
 
     if amount > account.balance:
-        return "Insufficent balance"
+        return HTMLResponse(convert_to_notification("Insufficent balance"))
 
     if account.sus:
-        return "You have failed our compliance"
+        return HTMLResponse(convert_to_notification("You have failed our compliance"))
 
     account.balance -= amount
     session.add(account)
     session.commit()
 
-    return f"Withdrew ${amount}.00"
+    return HTMLResponse(convert_to_notification(f"Withdrew ${amount}.00"))
 
 
-@app.get("/balance")
-async def get_balance_updates(
+@app.get("/activity")
+async def get_updates(
     account_id: uuid.UUID = Cookie(),
     session: Session = Depends(get_session),
 ) -> StreamingResponse:
     if not session.get(BankAccount, account_id):
         raise HTTPException(detail="Account not found", status_code=404)
 
-    async def balance_updates():
+    async def account_activity():
+        last_balance = None
         while app.state.running:
             balance = session.scalar(
                 select(BankAccount.balance).where(BankAccount.id == account_id)
             )
-            yield f"data: ${balance}.00\n\n"
+
+            if last_balance is None or balance != last_balance:
+                yield f"event: balance\ndata: ${balance}.00\n\n"
+                last_balance = balance
+
+            if not (notifications := BankAccount.activity[account_id]).empty():
+                while not notifications.empty():
+                    yield f"event: notification\ndata: {await notifications.get()}\n\n"
+
             await asyncio.sleep(1)
 
-    return StreamingResponse(balance_updates(), media_type="text/event-stream")
+    return StreamingResponse(account_activity(), media_type="text/event-stream")
 
 
 def check_cookie(x_internal_key: str = Header(default=None)):
@@ -291,6 +336,12 @@ async def compliance_failure(
     session.add(account)
     session.commit()
 
+    await BankAccount.activity[account.id].put(
+        convert_to_notification(
+            "Your account has been suspended for compliance reasons"
+        )
+    )
+
 
 @internal.post("/redeem/{address}")
 async def redeem_amount(
@@ -308,6 +359,10 @@ async def redeem_amount(
     account.balance += amount
     session.add(account)
     session.commit()
+
+    await BankAccount.activity[account.id].put(
+        convert_to_notification(f"Redeemed ${amount}.00")
+    )
 
 
 app.mount("/internal", internal)
