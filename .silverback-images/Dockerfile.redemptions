@@ -1,5 +1,6 @@
 FROM ghcr.io/apeworx/silverback:stable
 USER root
+RUN apt-get update && apt-get -y install git
 WORKDIR /app
 RUN chown harambe:harambe /app
 USER harambe
@@ -7,6 +8,8 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY ape-config.yaml .
 RUN ape plugins install -U .
+# TODO: `https://github.com/ApeWorX/ape-alchemy/pull/99` merged/released
+RUN pip install 'git+https://github.com/ApeWorX/ape-alchemy@fix/random-disconnect'
 # TODO: Make `silverback build --generate` add this
 COPY contracts contracts
 RUN ape compile
