@@ -42,7 +42,7 @@ ape networks run --network :local
 Then deploy your stablecoin via:
 
 ```sh
-ape run deploy --minter TEST::1 --compliance TEST::2 --account TEST::0 --network :local
+ape run deploy --account TEST::0 --network :local
 ...
 SUCCESS:  Contract 'Stablecoin' deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 ```
