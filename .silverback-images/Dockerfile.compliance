@@ -4,9 +4,12 @@ WORKDIR /app
 RUN chown harambe:harambe /app
 USER harambe
 COPY requirements.txt .
-COPY contracts contracts
 RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY ape-config.yaml .
 RUN ape plugins install -U .
+# TODO: Fix that it doesn't install a plugin that is `version`-fixed w/ `-U`
+RUN pip install 'ape-aws>=0.8.1b2'
+# TODO: Make `silverback build --generate` add this
+COPY contracts contracts
 RUN ape compile
 COPY bots/compliance.py /app/bot.py
