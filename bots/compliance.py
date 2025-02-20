@@ -47,7 +47,9 @@ async def check_compliance(log):
 
         for network_choice, stable_address in STABLECOIN_ADDRESSES.items():
             with networks.parse_network_choice(network_choice):
-                # NOTE: Also rug every other deployment we have too
+                # NOTE: Freeze on every deployment we have, not just this chain
                 project.Stablecoin.at(stable_address).set_freeze(
-                    [log.sender, log.receiver], sender=bot.signer
+                    [log.sender, log.receiver],
+                    sender=bot.signer,
+                    required_confirmations=0,  # Don't wait for conf
                 )
