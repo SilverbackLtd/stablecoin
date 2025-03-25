@@ -101,6 +101,17 @@ Finally, to get balance back to your account, redeem some tokens via:
 
 You should see the "redemptions" bot pick this balance up and push it to your account!
 
+### Simulation
+
+Instead of manually interacting using `ape console` you can instead run a simulation against the local configuration via:
+
+```sh
+ape run sim --network :local
+```
+
+This will run N random actions (controlled via `--steps`) from a set of accounts (controlled via `--num-accounts`),
+using random amounts of the stablecoin for each action.
+
 ## Deploy this example
 
 You can deploy this example on the [Silverback Platform](https://silverback.apeworx.io) and [Heroku](https://heroku.com) (for the webapp).
