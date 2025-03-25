@@ -4,8 +4,8 @@ plugins:
   # For testing/simulation
   - name: foundry
   # For bots
-  - name: aws
-    version: ">=0.8.1b1"
+  # TODO: Release `aws` plugin officially
+  # - name: aws
   - name: alchemy
 
 ethereum: &use-foundry
