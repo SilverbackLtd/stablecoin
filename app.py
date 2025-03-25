@@ -76,7 +76,7 @@ async def mint_tokens(account_id: uuid.UUID, network: str, amount: int):
         if not (account := session.get(BankAccount, account_id)):
             return
 
-        with networks.parse_network_choice(network):
+        with networks.parse_network_choice(network) as provider:
             stablecoin = project.Stablecoin.at(
                 settings.STABLECOIN_ADDRESSES.get(network), fetch_from_explorer=False
             )
@@ -86,9 +86,16 @@ async def mint_tokens(account_id: uuid.UUID, network: str, amount: int):
                 sender=settings.signer,
                 required_confirmations=0,  # Don't wait for receipt
             )
+            try:
+                tx_url = provider.network.explorer.get_transaction_url(tx.txn_hash)
+                tx_link = f"<a href='{tx_url}'>{tx.txn_hash}</a>"
+
+            except Exception:
+                tx_link = tx.txn_hash
+
             await BankAccount.activity[account.id].put(
                 convert_to_notification(
-                    f"Minted ${amount}.00 to {account.address} on '{network}': {tx.txn_hash}"
+                    f"Minted ${amount}.00 to {account.address} on '{network}': {tx_link}"
                 )
             )
 
