@@ -327,7 +327,7 @@ def check_cookie(x_internal_key: str = Header(default=None)):
 internal = FastAPI(dependencies=[Depends(check_cookie)])
 
 
-@internal.post("/access/{address}")
+@internal.delete("/access/{address}")
 async def compliance_failure(
     address: Address,
     session: Session = Depends(get_session),
@@ -350,7 +350,7 @@ async def compliance_failure(
     )
 
 
-@internal.post("/redeem/{address}")
+@internal.patch("/redeem/{address}")
 async def redeem_amount(
     address: Address,
     amount: int,

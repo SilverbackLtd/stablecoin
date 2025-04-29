@@ -6,12 +6,22 @@ plugins:
   # For bots
   # TODO: Release `aws` plugin officially
   # - name: aws
-  - name: alchemy
+  - name: infura
 
 ethereum: &use-foundry
+  sepolia:
+    default_provider: infura
   sepolia-fork:
     default_provider: foundry
   local:
     default_provider: foundry
 optimism: *use-foundry
 base: *use-foundry
+
+foundry:
+  fork:
+    ethereum: &use-infura
+      sepolia:
+        upstream_provider: infura
+    optimism: *use-infura
+    base: *use-infura

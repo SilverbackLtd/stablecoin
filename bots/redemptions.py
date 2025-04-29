@@ -28,14 +28,10 @@ stable = project.Stablecoin.at(
 )
 
 
-@bot.on_(stable.Transfer)
+# NOTE: Redemptions are burning supply (Transfers to 0x0)
+@bot.on_(stable.Transfer, receiver=ZERO_ADDRESS)
 async def redeemed(log):
-    # NOTE: refactor to use arg filtering when filtering available
-    #       https://github.com/ApeWorX/silverback/pull/55
-    if not log.receiver == ZERO_ADDRESS:
-        return
-
-    response = await bank.post(
+    response = await bank.patch(
         f"/redeem/{log.sender}",
         params=dict(amount=log.value // 10 ** stable.decimals()),
     )

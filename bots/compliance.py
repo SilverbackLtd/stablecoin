@@ -31,20 +31,25 @@ stable = project.Stablecoin.at(
 
 def compliance_check(log):
     if log.sender == ZERO_ADDRESS or log.receiver == ZERO_ADDRESS:
-        return False  # We are always compliant
+        return True  # Minting and Redeeming are always compliant
 
-    return random.random() > 0.95  # Super secret compliance function
+    # Return compliance passing if risk factor is below 95% percentile
+    return random.random() <= 0.95  # Super secret compliance function
 
 
 @bot.on_(stable.Transfer)
 async def check_compliance(log):
-    if compliance_check(log):
-        response = await bank.post(f"/access/{log.sender}")
-        assert response.status_code == 200, response.text
+    if not compliance_check(log):
+        # First revoke minting rights w/ web service
+        response = await bank.delete(f"/access/{log.sender}")
+        if response.status_code != 200:
+            print(response.text)
 
-        response = await bank.post(f"/access/{log.receiver}")
-        assert response.status_code == 200, response.text
+        response = await bank.delete(f"/access/{log.receiver}")
+        if response.status_code != 200:
+            print(response.text)
 
+        # Now go and remove transfer rights from every chain we are deployed on
         for network_choice, stable_address in STABLECOIN_ADDRESSES.items():
             with networks.parse_network_choice(network_choice):
                 # NOTE: Freeze on every deployment we have, not just this chain
