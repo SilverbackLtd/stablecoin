@@ -25,3 +25,17 @@ foundry:
         upstream_provider: infura
     optimism: *use-infura
     base: *use-infura
+
+deployments:
+  ethereum:
+    sepolia:
+      - contract_type: Stablecoin
+        address: 0x4C284a79108809cDEDb99679889eb2e931DbF8f5
+  base:
+    sepolia:
+      - contract_type: Stablecoin
+        address: 0xf919ae18BbD224996FC296D7a30CC4E8F2778dCF
+  optimism:
+    sepolia:
+      - contract_type: Stablecoin
+        address: 0x69dC7E4425349c3cA492f67AdC9b5b69DDe8bbf4
